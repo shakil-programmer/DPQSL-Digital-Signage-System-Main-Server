@@ -636,6 +636,7 @@ window.sendControl = function (cmd) {
   set(ref(db, 'signage/control'), { command: cmd, ts: Date.now() });
 };
 
+
 window.updateTickerPreview = function () {
   const text = document.getElementById('tickerText').value || 'Preview text…';
   const color = document.getElementById('tickerColor').value;
