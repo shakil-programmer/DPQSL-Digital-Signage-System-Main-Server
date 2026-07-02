@@ -136,6 +136,13 @@
   .mt8 { margin-top: 8px; }
   .speed-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px; }
   .section-head { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 9998; }
+  .modal-overlay.open { display: flex; }
+  .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; width: 420px; max-width: 90vw; max-height: 85vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  .modal-title { font-size: 14px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+  .modal-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
 </style>
 </head>
 <body>
@@ -501,11 +508,22 @@ window.addImageSlide = function () {
 
 window.addVideoSlide = function () {
   const url = document.getElementById('videoUrl').value.trim();
-  const src = uploadedFiles.video || url;
+  let src = uploadedFiles.video || url;
   if (!src) { toast('Please select a file or enter URL', 'error'); return; }
-  addSlide({ type: 'video', name: v('videoName'), duration: n('videoDuration', 60), src });
+  const isYoutube = !src.startsWith('data:') && /youtube\.com|youtu\.be/.test(src);
+  if (isYoutube) src = ytToEmbed(src);
+  addSlide({ type: 'video', name: v('videoName'), duration: n('videoDuration', 60), src, isEmbed: isYoutube });
   clearFileState('video');
 };
+
+function ytToEmbed(url) {
+  let id = null;
+  let m = url.match(/[?&]v=([^&]+)/);
+  if (m) id = m[1];
+  if (!id) { m = url.match(/youtu\.be\/([^?&]+)/); if (m) id = m[1]; }
+  if (!id) { m = url.match(/youtube\.com\/embed\/([^?&]+)/); if (m) id = m[1]; }
+  return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&controls=0&enablejsapi=1` : url;
+}
 
 window.addPdfSlide = function () {
   const url = document.getElementById('pdfUrl').value.trim();
@@ -615,6 +633,85 @@ function renderQueue() {
 window.toggleSlide = function (i) { slides[i].active = !slides[i].active; renderQueue(); };
 window.deleteSlide = function (i) { slides.splice(i,1); renderQueue(); toast('Slide deleted','info'); };
 
+// ---- Clear All ----
+document.getElementById('clearAllBtn').addEventListener('click', () => {
+  if (slides.length === 0) { toast('Queue is already empty', 'info'); return; }
+  if (confirm('Remove all slides from the queue? This cannot be undone.')) {
+    slides = [];
+    renderQueue();
+    toast('All slides cleared', 'info');
+  }
+});
+
+// ---- Edit Slide ----
+let editIndex = null;
+const editOverlay = document.getElementById('editModalOverlay');
+
+function youtubeToEmbed(url) {
+  if (!url) return url;
+  let id = null;
+  let m = url.match(/[?&]v=([^&]+)/);
+  if (m) id = m[1];
+  if (!id) { m = url.match(/youtu\.be\/([^?&]+)/); if (m) id = m[1]; }
+  if (!id) { m = url.match(/youtube\.com\/embed\/([^?&]+)/); if (m) id = m[1]; }
+  return id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&controls=0&enablejsapi=1` : url;
+}
+
+window.editSlide = function (i) {
+  editIndex = i;
+  const s = slides[i];
+  document.getElementById('editName').value = s.name || '';
+  document.getElementById('editDuration').value = s.duration || 10;
+
+  const srcGroup = document.getElementById('editSrcGroup');
+  const srcLabel = document.getElementById('editSrcLabel');
+  const srcInput = document.getElementById('editSrc');
+  const srcHint = document.getElementById('editSrcHint');
+  const textGroup = document.getElementById('editTextGroup');
+
+  if (s.type === 'text') {
+    srcGroup.style.display = 'none';
+    textGroup.style.display = 'block';
+    document.getElementById('editTextContent').value = s.content || '';
+  } else {
+    textGroup.style.display = 'none';
+    srcGroup.style.display = 'block';
+    srcLabel.textContent = s.type === 'video' ? 'Video URL (YouTube / Drive / direct link)' : 'Source URL';
+    srcInput.value = s.src || '';
+    if (s.src && s.src.startsWith('data:')) {
+      srcHint.textContent = 'This slide uses an uploaded file. Editing the URL here will replace it with a link instead of the uploaded file — leave unchanged to keep the original upload.';
+    } else {
+      srcHint.textContent = '';
+    }
+  }
+  editOverlay.classList.add('open');
+};
+
+function closeEditModal() { editOverlay.classList.remove('open'); editIndex = null; }
+document.getElementById('editModalCloseBtn').addEventListener('click', closeEditModal);
+document.getElementById('editCancelBtn').addEventListener('click', closeEditModal);
+editOverlay.addEventListener('click', e => { if (e.target === editOverlay) closeEditModal(); });
+
+document.getElementById('editSaveBtn').addEventListener('click', () => {
+  if (editIndex === null) return;
+  const s = slides[editIndex];
+  s.name = document.getElementById('editName').value.trim() || s.name;
+  s.duration = parseInt(document.getElementById('editDuration').value) || s.duration;
+
+  if (s.type === 'text') {
+    s.content = document.getElementById('editTextContent').value;
+  } else {
+    let newSrc = document.getElementById('editSrc').value.trim();
+    if (newSrc) {
+      if (s.type === 'video' && !newSrc.startsWith('data:')) newSrc = youtubeToEmbed(newSrc);
+      s.src = newSrc;
+    }
+  }
+  renderQueue();
+  toast(`"${s.name}" updated`, 'success');
+  closeEditModal();
+});
+
 function updateStats() {
   const active = slides.filter(s => s.active);
   document.getElementById('statTotal').textContent = slides.length;
@@ -673,5 +770,36 @@ function toast(msg, type = 'info') {
 updateTickerPreview();
 renderQueue();
 </script>
+
+<div class="modal-overlay" id="editModalOverlay">
+  <div class="modal-box">
+    <div class="modal-title">
+      <span>✎ Edit Slide</span>
+      <button class="modal-close" id="editModalCloseBtn">✕</button>
+    </div>
+    <div class="form-group">
+      <label>Slide Name</label>
+      <input type="text" id="editName">
+    </div>
+    <div class="form-group">
+      <label>Duration (seconds)</label>
+      <input type="number" id="editDuration" min="1">
+    </div>
+    <div class="form-group" id="editSrcGroup">
+      <label id="editSrcLabel">Source URL</label>
+      <input type="text" id="editSrc">
+      <div class="text-muted mt8" id="editSrcHint"></div>
+    </div>
+    <div class="form-group" id="editTextGroup" style="display:none;">
+      <label>Text Content</label>
+      <textarea id="editTextContent"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost btn-sm" id="editCancelBtn">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="editSaveBtn">Save Changes</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
